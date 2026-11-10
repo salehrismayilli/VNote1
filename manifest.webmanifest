@@ -1,0 +1,20 @@
+{
+  "name": "VNote",
+  "short_name": "VNote",
+  "description": "Voice notes",
+  "lang": "en",
+  "start_url": "./index.html?src=icon",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a1230",
+  "theme_color": "#0a1230",
+  "icons": [
+    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
+  ],
+  "shortcuts": [
+    {"name": "Səs yaz", "short_name": "Səs yaz", "url": "./index.html?rec=1",
+     "icons": [{"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"}]}
+  ]
+}

@@ -1,0 +1,41 @@
+name: Build VNote iOS (unsigned IPA)
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Layihəni yoxla
+        run: |
+          N=$(find . -name package.json -not -path "*/node_modules/*" | wc -l)
+          if [ "$N" != "1" ]; then echo "XETA: $N package.json tapildi"; exit 1; fi
+          P=$(dirname "$(find . -name package.json -not -path "*/node_modules/*")")
+          echo "PROJ=$P" >> $GITHUB_ENV
+          V=$(grep -o "VER='[0-9][0-9.]*'" "$P/www/index.html" | head -1 | grep -o "[0-9][0-9.]*")
+          echo "VER=$V" >> $GITHUB_ENV
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-audit --no-fund
+        working-directory: ${{ env.PROJ }}
+      - run: npx cap add ios
+        working-directory: ${{ env.PROJ }}
+      - run: node scripts/patch-ios.js
+        working-directory: ${{ env.PROJ }}
+      - run: npx cap sync ios
+        working-directory: ${{ env.PROJ }}
+      - name: Build
+        working-directory: ${{ env.PROJ }}/ios/App
+        run: |
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -sdk iphoneos -derivedDataPath ../../build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" | tail -n 40
+      - name: IPA
+        working-directory: ${{ env.PROJ }}
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry VNote.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VNote-iOS-v${{ env.VER }}
+          path: ${{ env.PROJ }}/VNote.ipa

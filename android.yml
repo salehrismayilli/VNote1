@@ -1,0 +1,122 @@
+name: Build VNote APK
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      ver: ${{ steps.chk.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Layihəni yoxla
+        id: chk
+        run: |
+          N=$(find . -name package.json -not -path "*/node_modules/*" | wc -l)
+          if [ "$N" != "1" ]; then
+            echo "XƏTA: $N ədəd package.json tapıldı (1 olmalıdır). Təkrar qovluqları sil:"
+            find . -name package.json -not -path "*/node_modules/*"
+            exit 1
+          fi
+          P=$(dirname "$(find . -name package.json -not -path "*/node_modules/*")")
+          echo "PROJ=$P" >> $GITHUB_ENV
+          B=$(grep -o "VER='[0-9][0-9.]*'" "$P/www/index.html" | head -1 | grep -o "[0-9][0-9.]*")
+          if [ "$B" != "5.5" ]; then
+            echo "XƏTA: GitHub-dakı www/index.html köhnədir (versiya: $B), 5.5 olmalıdır."
+            echo "Layihə qovluğu: $P"; ls -la "$P/www" || true
+            echo "Həll: www qovluğunu silib VNote-v5.3 arxivindəki www qovluğunu yenidən yüklə."
+            exit 1
+          fi
+          sed -i "s/const VER='\([0-9][0-9.]*\)'/const VER='\1.${{ github.run_number }}'/" "$P/www/index.html"
+          V=$(grep -o "VER='[0-9][0-9.]*'" "$P/www/index.html" | head -1 | grep -o "[0-9][0-9.]*")
+          echo "VER=$V" >> $GITHUB_ENV
+          echo "ver=$V" >> $GITHUB_OUTPUT
+          echo "VNote versiyasi: $V"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm install --no-audit --no-fund
+        working-directory: ${{ env.PROJ }}
+      - run: npx cap add android
+        working-directory: ${{ env.PROJ }}
+      - run: node scripts/patch-android.js
+        working-directory: ${{ env.PROJ }}
+      - run: npx cap sync android
+        working-directory: ${{ env.PROJ }}
+      - run: chmod +x gradlew && ./gradlew assembleDebug
+        working-directory: ${{ env.PROJ }}/android
+      - name: APK-nı adlandır
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk "VNote-v${VER}.apk"
+        working-directory: ${{ env.PROJ }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VNote-v${{ env.VER }}
+          path: ${{ env.PROJ }}/VNote-v${{ env.VER }}.apk
+
+  web-tests:
+    # Avtomatik sınaq: düymələr, qeyd, to-do, zibil, şəkil, səs boru xətti. Uğursuz olsa APK yenə də hazırdır.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Sınaq
+        run: |
+          set -o pipefail
+          pip install playwright
+          python -m playwright install --with-deps chromium
+          IDX=$(find . -path '*/www/index.html' -not -path '*/node_modules/*' | head -1)
+          ROOT=$(dirname "$(dirname "$IDX")")
+          cd "$ROOT"
+          mkdir -p tests/out
+          WWW="$(pwd)/www" CI=1 python tests/smoke.py 2>&1 | tee tests/out/test-log.txt
+      - name: Xülasə
+        if: always()
+        run: |
+          F=$(find . -name test-log.txt -not -path '*/node_modules/*' | head -1)
+          [ -n "$F" ] || exit 0
+          { echo "### VNote sınaq nəticəsi"; echo '```'; grep -E "PASS|FAIL|Error|Traceback" "$F" | head -60; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-report
+          path: "**/tests/out/*"
+
+  emulator:
+    # Android emulyatorunda APK-nı açır, ekran görüntüsü və log yığır (səs və bildiriş yoxlanmır).
+    needs: build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: VNote-v${{ needs.build.outputs.ver }}
+      - name: KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          script: |
+            adb install -r VNote-v*.apk
+            adb shell am start -n com.vnote.app/.MainActivity
+            sleep 25
+            adb exec-out screencap -p > emulator-home.png
+            adb logcat -d > emulator-logcat.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-report
+          path: |
+            emulator-home.png
+            emulator-logcat.txt
